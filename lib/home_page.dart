@@ -355,6 +355,7 @@ class _HomePageState extends State<HomePage> {
           body.contains("statement") ||
           body.contains("summary") ||
           body.contains("report") ||
+          body.contains("have activated") ||
           body.contains("outstanding")) {
         continue;
       }
@@ -790,6 +791,13 @@ class _HomePageState extends State<HomePage> {
     // Sort Top Level (Categories mixed with Uncategorized Merchants)
     // We sort by latest transaction date in that block
     layout.sort((a, b) {
+       // 1. Priority: Categories First
+       bool aIsCategory = a is CategoryGroup;
+       bool bIsCategory = b is CategoryGroup;
+       if (aIsCategory && !bIsCategory) return -1;
+       if (!aIsCategory && bIsCategory) return 1;
+
+       // 2. Secondary: Date Descending
        DateTime dateA;
        if (a is CategoryGroup) {
          // Latest date in the category
@@ -933,6 +941,7 @@ class _HomePageState extends State<HomePage> {
   int _currentTabIndex = 0;
   String _analysisView = 'Monthly'; // 'Weekly', 'Monthly'
   String _analysisFilter = 'All'; // 'All', 'Credit', 'Debit'
+  int _selectedChartIndex = -1;
 
   @override
   Widget build(BuildContext context) {
@@ -1016,13 +1025,32 @@ class _HomePageState extends State<HomePage> {
     List<String> xLabels = trendData.keys.toList();
     List<double> barValues = trendData.values.toList();
     
+    // Determine Selected Period for Pie Chart
+    int targetIndex = _selectedChartIndex;
+    if (targetIndex < 0 || targetIndex >= xLabels.length) {
+      targetIndex = xLabels.length - 1; // Default to latest
+    }
+    String targetKey = xLabels.isNotEmpty ? xLabels[targetIndex] : "";
+    
+    // Filter Data for Pie Chart based on Selection
+    final List<Transaction> pieData = xLabels.isEmpty ? [] : relevantData.where((t) {
+       String key;
+       if (_analysisView == 'Monthly') {
+         key = DateFormat('MMM').format(t.date);
+       } else {
+         DateTime weekStart = t.date.subtract(Duration(days: t.date.weekday - 1));
+         key = "${weekStart.day}/${weekStart.month}";
+       }
+       return key == targetKey;
+    }).toList();
+    
     // Determine Max Y for Bar Chart
     double maxY = barValues.isEmpty ? 100 : barValues.reduce((curr, next) => curr > next ? curr : next);
     if (maxY == 0) maxY = 100;
     maxY = maxY * 1.2;
 
     // 3. Prepare Category Data (Pie Chart)
-    final categoryData = _prepareCategoryData(relevantData);
+    final categoryData = _prepareCategoryData(pieData);
     final totalAmount = categoryData.values.fold(0.0, (sum, item) => sum + item);
 
     return SingleChildScrollView(
@@ -1042,11 +1070,12 @@ class _HomePageState extends State<HomePage> {
                   onSelectionChanged: (Set<String> newSelection) {
                     setState(() {
                       _analysisView = newSelection.first;
+                      _selectedChartIndex = -1;
                     });
                   },
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               DropdownButton<String>(
                 value: _analysisFilter,
                 items: ['All', 'Credit', 'Debit'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
@@ -1071,24 +1100,34 @@ class _HomePageState extends State<HomePage> {
                   BarChartData(
                     alignment: BarChartAlignment.spaceAround,
                     maxY: maxY,
-                    barTouchData: BarTouchData(
-                      enabled: true,
-                      touchTooltipData: BarTouchTooltipData(
-                        getTooltipColor: (_) => Colors.blueGrey,
-                        getTooltipItem: (group, groupIndex, rod, rodIndex) {
-                          return BarTooltipItem(
-                            "${xLabels[group.x.toInt()]}\n",
-                            const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                            children: [
-                              TextSpan(
-                                text: NumberFormat.currency(symbol: "₹", decimalDigits: 0, locale: "en_IN").format(rod.toY),
-                                style: const TextStyle(color: Colors.yellowAccent),
-                              )
-                            ]
-                          );
-                        }
+                      barTouchData: BarTouchData(
+                        enabled: true,
+                        touchCallback: (FlTouchEvent event, barTouchResponse) {
+                           if (!event.isInterestedForInteractions || barTouchResponse == null || barTouchResponse.spot == null) {
+                             return;
+                           }
+                           if (event is FlTapUpEvent) { // Only update on tap up
+                             setState(() {
+                               _selectedChartIndex = barTouchResponse.spot!.touchedBarGroupIndex;
+                             });
+                           }
+                        },
+                        touchTooltipData: BarTouchTooltipData(
+                          getTooltipColor: (_) => Colors.blueGrey,
+                          getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                            return BarTooltipItem(
+                              "${xLabels[group.x.toInt()]}\n",
+                              const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                              children: [
+                                TextSpan(
+                                  text: NumberFormat.currency(symbol: "₹", decimalDigits: 0, locale: "en_IN").format(rod.toY),
+                                  style: const TextStyle(color: Colors.yellowAccent),
+                                )
+                              ]
+                            );
+                          }
+                        ),
                       ),
-                    ),
                     titlesData: FlTitlesData(
                       show: true,
                       topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
@@ -1120,12 +1159,14 @@ class _HomePageState extends State<HomePage> {
                        return BarChartGroupData(
                          x: index,
                          barRods: [
-                           BarChartRodData(
-                             toY: barValues[index],
-                             color: _analysisFilter == 'Credit' ? Colors.green : (_analysisFilter == 'Debit' ? Colors.red : Colors.blue),
-                             width: 12,
-                             borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-                           )
+                             BarChartRodData(
+                               toY: barValues[index],
+                               color: _selectedChartIndex == index || (index == xLabels.length - 1 && _selectedChartIndex == -1) 
+                                   ? (_analysisFilter == 'Credit' ? Colors.green : (_analysisFilter == 'Debit' ? Colors.red : Colors.blue))
+                                   : Colors.grey.withOpacity(0.5), // Highlight selected
+                               width: 12,
+                               borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                             )
                          ]
                        );
                     }),
@@ -1136,7 +1177,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 30),
           
           // CATEGORY CHART
-          const Align(alignment: Alignment.centerLeft, child: Text("Category Distribution", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+          Align(alignment: Alignment.centerLeft, child: Text("Category Distribution ${targetKey.isNotEmpty ? '($targetKey)' : ''}", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
           const SizedBox(height: 10),
           SizedBox(
             height: 250, // Enough for Pie + Legend
@@ -1158,7 +1199,7 @@ class _HomePageState extends State<HomePage> {
                            color: _getCategoryColor(e.key),
                            value: e.value,
                            title: "${percent.toStringAsFixed(0)}%",
-                           radius: isLarge ? 85 : 75,
+                           radius: isLarge ? 50 : 40,
                            titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
                            badgeWidget: isLarge ? _Badge(e.key) : null,
                            badgePositionPercentageOffset: 1.1
@@ -1441,15 +1482,15 @@ class _HomePageState extends State<HomePage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildSummaryRow("Income", _monthTotalCredit, Colors.greenAccent),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 _buildSummaryRow("Expense", _monthTotalDebit, Colors.redAccent),
               ],
             ),
           ),
           if (total > 0)
           SizedBox(
-            height: 100,
-            width: 100,
+            height: 70,
+            width: 70,
             child: PieChart(
               PieChartData(
                 sectionsSpace: 2,
@@ -1458,13 +1499,13 @@ class _HomePageState extends State<HomePage> {
                   PieChartSectionData(
                     color: Colors.greenAccent,
                     value: _monthTotalCredit <= 0 && _monthTotalDebit <= 0 ? 1 : (_monthTotalCredit > 0 ? _monthTotalCredit : 0),
-                    radius: 50,
+                    radius: 20,
                     showTitle: false,
                   ),
                   PieChartSectionData(
                     color: Colors.redAccent,
                     value: _monthTotalDebit > 0 ? _monthTotalDebit : 0,
-                    radius: 50,
+                    radius: 20,
                     showTitle: false,
                   ),
                 ],
