@@ -1735,15 +1735,16 @@ class _HomePageState extends State<HomePage> {
       Set<String> allCats = {..._availableCategories, ...spentMap.keys};
       
       for (var cat in allCats) {
-         double monthlyLimit = _categoryLimits[cat] ?? 0;
-         double periodLimit = monthlyLimit / divisor;
+         double? monthlyLimit = _categoryLimits[cat];
+         double periodLimit = (monthlyLimit ?? 0) / divisor;
          double spent = spentMap[cat] ?? 0;
          
          // Only show if there is a limit set OR money spent
-         if (monthlyLimit > 0 || spent > 0) {
+         if ((monthlyLimit != null && monthlyLimit > 0) || spent > 0) {
             rows.add({
               'category': cat,
               'limit': periodLimit,
+              'limit_display': monthlyLimit != null ? periodLimit : null, // for NA check
               'spent': spent,
               'status': (periodLimit > 0 && spent > periodLimit) ? 'Over' : 'Ok'
             });
@@ -1778,11 +1779,11 @@ class _HomePageState extends State<HomePage> {
               ],
               rows: rows.map((r) {
                  bool isOver = r['status'] == 'Over';
-                 double limit = r['limit'];
+                 double? limit = r['limit_display'];
                  return DataRow(
                    cells: [
                      DataCell(Text(r['category'], style: const TextStyle(fontSize: 12))),
-                     DataCell(Text(limit > 0 ? NumberFormat.compactCurrency(symbol: '₹').format(limit) : '-', style: const TextStyle(fontSize: 12))),
+                     DataCell(Text(limit != null ? NumberFormat.compactCurrency(symbol: '₹').format(limit) : 'NA', style: const TextStyle(fontSize: 12))),
                      DataCell(Text(NumberFormat.compactCurrency(symbol: '₹').format(r['spent']), style: const TextStyle(fontSize: 12))),
                      DataCell(
                        Container(

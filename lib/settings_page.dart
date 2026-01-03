@@ -11,12 +11,21 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   List<String> _categories = [];
   Map<String, double> _limits = {};
+  final Map<String, TextEditingController> _controllers = {};
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    for (var controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -43,6 +52,13 @@ class _SettingsPageState extends State<SettingsPage> {
       _categories = catList!;
       _limits = loadedLimits;
       _isLoading = false;
+      
+      // Initialize controllers
+      for (var cat in _categories) {
+        _controllers[cat] = TextEditingController(
+          text: _limits[cat] != null ? _limits[cat]!.toStringAsFixed(0) : ""
+        );
+      }
     });
   }
 
@@ -53,6 +69,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
     setState(() {
       _categories.add(clean);
+      _controllers[clean] = TextEditingController();
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('user_categories', _categories);
@@ -62,6 +79,8 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() {
       _categories.remove(name);
       _limits.remove(name); // Remove associated limit
+      _controllers[name]?.dispose();
+      _controllers.remove(name);
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('user_categories', _categories);
@@ -72,15 +91,14 @@ class _SettingsPageState extends State<SettingsPage> {
     double? limit = double.tryParse(value);
     final prefs = await SharedPreferences.getInstance();
     if (limit != null && limit > 0) {
-      setState(() {
-        _limits[category] = limit;
-      });
+      // Don't reconstruct state fully or we lose focus, just update variable
+      _limits[category] = limit;
+      // We don't setState here to avoid rebuilding the list item and resetting cursor
+      // but we do need to persist.
       await prefs.setDouble("limit_$category", limit);
     } else {
       // If cleared or invalid, remove limit
-      setState(() {
-        _limits.remove(category);
-      });
+      _limits.remove(category);
       await prefs.remove("limit_$category");
     }
   }
@@ -186,8 +204,8 @@ class _SettingsPageState extends State<SettingsPage> {
       padding: const EdgeInsets.all(16),
       itemBuilder: (context, index) {
         final cat = _categories[index];
-        final limit = _limits[cat];
-        final controller = TextEditingController(text: limit != null ? limit.toStringAsFixed(0) : "");
+        // Use existing controller
+        final controller = _controllers[cat] ?? TextEditingController(); 
 
         return Card(
           margin: const EdgeInsets.only(bottom: 12),
