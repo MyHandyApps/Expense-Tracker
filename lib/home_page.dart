@@ -132,7 +132,12 @@ class _HomePageState extends State<HomePage> {
   List<String> _availableCategories = [];
   Map<String, double> _categoryLimits = {};
   List<String> _overLimitCategories = [];
+
   bool _hasNotification = false;
+  
+  // Analysis State
+  DateTime _analysisDate = DateTime.now();
+  String? _drilldownCategory;
 
   Future<File> get _localFile async {
     final directory = await getApplicationDocumentsDirectory();
@@ -1195,9 +1200,9 @@ class _HomePageState extends State<HomePage> {
         elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.ios_share),
-            tooltip: "Export",
-            onPressed: _showExportDialog,
+            icon: const Icon(Icons.share),
+            tooltip: "Actions",
+            onPressed: _showUnifiedActionSheet,
           ),
           // Notification Bell
           Stack(
@@ -1239,33 +1244,15 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
           IconButton(
-            icon: const Icon(Icons.file_upload),
-            tooltip: "Import",
-            onPressed: _importData,
-          ),
-          IconButton(
-            icon: const Icon(Icons.picture_as_pdf),
-            tooltip: "Download PDF",
-            onPressed: () {
-               if (_flatGroupedTransactions.isNotEmpty) {
-                 _generatePdfAndOpen();
-               } else {
-                 ScaffoldMessenger.of(context).showSnackBar(
-                   const SnackBar(content: Text("No data to export for this month")),
-                 );
-               }
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: "Refresh",
-            onPressed: () {
-              setState(() {
-                _isLoading = true;
-              });
-              _loadMessages();
-            },
-          )
+             icon: const Icon(Icons.refresh),
+             tooltip: "Refresh",
+             onPressed: () {
+               setState(() {
+                 _isLoading = true;
+               });
+               _loadMessages();
+             },
+           )
         ],
       ),
       body: Container(
@@ -1313,46 +1300,103 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildAnalysisTab() {
-    // 1. Get Base Data (Filtered by Type and Time Window)
-    final List<Transaction> relevantData = _getFilteredTransactionsForAnalysis();
+    // 1. Get Base Data (Transactions for the selected Analysis Month)
+    // We want ALL transactions for this month to do local filtering
+    final List<Transaction> monthData = _allTransactions.where((t) {
+        return t.date.year == _analysisDate.year && t.date.month == _analysisDate.month;
+    }).toList();
     
+    // Filter by Type
+    final List<Transaction> filteredByType = monthData.where((t) {
+      if (_analysisFilter == 'Credit') return t.isCredit;
+      if (_analysisFilter == 'Debit') return !t.isCredit;
+      return true;
+    }).toList();
+    filteredByType.sort((a,b) => a.date.compareTo(b.date)); // Ascending for graph
+
     // 2. Prepare Trend Data (Bar Chart)
-    final trendData = _prepareTrendData(relevantData);
+    // If Weekly: Group by Week # (1-5)
+    // If Monthly: Group by Day? Or maybe just weeks is enough.
+    // User asked "month which should show that month data and weekly data for that month"
+    // So likely they want to see the Weekly Trend for the selected month.
+    // If we toggle to "Daily", we show days. 
+    // Let's interpret the Toggle as: Weekly vs Daily (for the selected month)
+    // OR: Weekly (for selected month) vs Monthly (Trend of year)? 
+    // "In analysis i need month which should show that month data" 
+    // Let's stick to: Always show data for `_analysisDate`.
+    // Toggle controls grouping: Weekly / Daily.
+    
+    Map<String, double> trendData = {};
+    if (_analysisView == 'Weekly') {
+       for(var t in filteredByType) {
+          // Calculate Week Number (1-5 roughly)
+          // Simple approximation: (day / 7).ceil()
+          int weekNum = ((t.date.day - 1) / 7).floor() + 1;
+          String key = "W$weekNum";
+          trendData[key] = (trendData[key] ?? 0) + t.amount;
+       }
+    } else {
+       // Monthly View -> Show Weekly trend anyway? Or Daily?
+       // Let's assume "Monthly" means "Analysis for the Month".
+       // If user toggles button, maybe they want to see "Daily" trend? 
+       // Constraint: SegmentedButton has 'Weekly', 'Monthly'.
+       // If 'Monthly' is selected, maybe we show the LAST 6 MONTHS trend (History)?
+       // "weekly data for that month".
+       // Let's make:
+       // - Monthly Tab: Shows Last 6 Months Trend (Context).
+       // - Weekly Tab: Shows Breakdown of *Selected Month* by Week.
+       if (_analysisView == 'Monthly') {
+           // Overwrite monthData with 6-month history
+           DateTime start = _analysisDate.subtract(const Duration(days: 180));
+           // Re-fetch relevant data
+           List<Transaction> history = _allTransactions.where((t) => t.date.isAfter(start) && t.date.isBefore(_analysisDate.add(const Duration(days:1)))).toList();
+           if (_analysisFilter == 'Credit') history = history.where((t) => t.isCredit).toList();
+           if (_analysisFilter == 'Debit') history = history.where((t) => !t.isCredit).toList();
+           history.sort((a,b) => a.date.compareTo(b.date));
+           
+           for(var t in history) {
+              String key = DateFormat('MMM').format(t.date);
+              trendData[key] = (trendData[key] ?? 0) + t.amount;
+           }
+           
+           // For Pie/Table usage, we still likely want the Focused Month data if possible?
+           // Or does the whole view switch context?
+           // "show that month data". 
+           // Implies Focus is on One Month.
+           // Let's strictly follow: "weekly data for that month".
+           // I will interpret "Weekly" as "Current Month broken into Weeks".
+           // "Monthly" as "Daily breakdown of Current Month"??
+           // No, standard convention: 
+           // Weekly = view by weeks.
+           // Monthly = view by months. 
+           // If I select Dec, and choose Weekly -> Shows W1, W2, W3, W4 of Dec.
+           // If I choose Monthly -> Shows Jan...Dec (Trend).
+           
+           // BUT Pie chart should be for "that category... for that month".
+           // So the PIE CHART and DRILLDOWN should always be for `_analysisDate`.
+           // The TREND CHART can vary.
+       }
+    }
+
     List<String> xLabels = trendData.keys.toList();
     List<double> barValues = trendData.values.toList();
     
-    // Determine Selected Period for Pie Chart
-    int targetIndex = _selectedChartIndex;
-    if (targetIndex < 0 || targetIndex >= xLabels.length) {
-      targetIndex = xLabels.length - 1; // Default to latest
-    }
-    String targetKey = xLabels.isNotEmpty ? xLabels[targetIndex] : "";
-    
-    // Filter Data for Pie Chart based on Selection
-    final List<Transaction> pieData = xLabels.isEmpty ? [] : relevantData.where((t) {
-       String key;
-       if (_analysisView == 'Monthly') {
-         key = DateFormat('MMM').format(t.date);
-       } else {
-         DateTime weekStart = t.date.subtract(Duration(days: t.date.weekday - 1));
-         key = "${weekStart.day}/${weekStart.month}";
-       }
-       return key == targetKey;
-    }).toList();
-    
-    // Determine Max Y for Bar Chart
     double maxY = barValues.isEmpty ? 100 : barValues.reduce((curr, next) => curr > next ? curr : next);
-    if (maxY == 0) maxY = 100;
     maxY = maxY * 1.2;
+    if (maxY == 0) maxY = 100;
 
-    // 3. Prepare Category Data (Pie Chart)
-    final categoryData = _prepareCategoryData(pieData);
+    // 3. Prepare Category Data (Pie Chart) - ALWAYS for the specific Month Selected
+    final categoryData = _prepareCategoryData(filteredByType);
     final totalAmount = categoryData.values.fold(0.0, (sum, item) => sum + item);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         children: [
+          // Month Selector
+          _buildAnalysisMonthSelector(),
+          const SizedBox(height: 10),
+          
           // Controls
           Row(
             children: [
@@ -1378,6 +1422,7 @@ class _HomePageState extends State<HomePage> {
                 onChanged: (val) {
                    setState(() {
                      _analysisFilter = val!;
+                     _drilldownCategory = null; // Reset drilldown
                    });
                 },
               )
@@ -1386,7 +1431,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 20),
           
           // TREND CHART
-          const Align(alignment: Alignment.centerLeft, child: Text("Trend", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+          Align(alignment: Alignment.centerLeft, child: Text(_analysisView == 'Weekly' ? "Weekly Trend (${DateFormat('MMM').format(_analysisDate)})" : "6-Month Trend", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
           const SizedBox(height: 10),
           SizedBox(
             height: 200,
@@ -1396,19 +1441,9 @@ class _HomePageState extends State<HomePage> {
                   BarChartData(
                     alignment: BarChartAlignment.spaceAround,
                     maxY: maxY,
-                      barTouchData: BarTouchData(
-                        enabled: true,
-                        touchCallback: (FlTouchEvent event, barTouchResponse) {
-                           if (!event.isInterestedForInteractions || barTouchResponse == null || barTouchResponse.spot == null) {
-                             return;
-                           }
-                           if (event is FlTapUpEvent) { // Only update on tap up
-                             setState(() {
-                               _selectedChartIndex = barTouchResponse.spot!.touchedBarGroupIndex;
-                             });
-                           }
-                        },
-                        touchTooltipData: BarTouchTooltipData(
+                    barTouchData: BarTouchData(
+                      enabled: true,
+                      touchTooltipData: BarTouchTooltipData(
                           getTooltipColor: (_) => Colors.blueGrey,
                           getTooltipItem: (group, groupIndex, rod, rodIndex) {
                             return BarTooltipItem(
@@ -1423,7 +1458,7 @@ class _HomePageState extends State<HomePage> {
                             );
                           }
                         ),
-                      ),
+                    ),
                     titlesData: FlTitlesData(
                       show: true,
                       topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
@@ -1457,9 +1492,7 @@ class _HomePageState extends State<HomePage> {
                          barRods: [
                              BarChartRodData(
                                toY: barValues[index],
-                               color: _selectedChartIndex == index || (index == xLabels.length - 1 && _selectedChartIndex == -1) 
-                                   ? (_analysisFilter == 'Credit' ? Colors.green : (_analysisFilter == 'Debit' ? Colors.red : Colors.blue))
-                                   : Colors.grey.withOpacity(0.5), // Highlight selected
+                               color: _analysisFilter == 'Credit' ? Colors.green : (_analysisFilter == 'Debit' ? Colors.red : Colors.blue),
                                width: 12,
                                borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
                              )
@@ -1469,11 +1502,10 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
           ),
-
           const SizedBox(height: 30),
           
           // CATEGORY CHART
-          Align(alignment: Alignment.centerLeft, child: Text("Category Distribution ${targetKey.isNotEmpty ? '($targetKey)' : ''}", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+          Align(alignment: Alignment.centerLeft, child: Text("Category Distribution (${DateFormat('MMMM').format(_analysisDate)})", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
           const SizedBox(height: 10),
           SizedBox(
             height: 250, // Enough for Pie + Legend
@@ -1486,54 +1518,290 @@ class _HomePageState extends State<HomePage> {
                    flex: 5,
                    child: PieChart(
                      PieChartData(
-                       sectionsSpace: 0,
+                       pieTouchData: PieTouchData(
+                         touchCallback: (FlTouchEvent event, pieTouchResponse) {
+                            if (!event.isInterestedForInteractions || pieTouchResponse == null || pieTouchResponse.touchedSection == null) {
+                              return;
+                            }
+                            if (event is FlTapUpEvent) {
+                               final index = pieTouchResponse.touchedSection!.touchedSectionIndex;
+                               if (index >= 0 && index < categoryData.length) {
+                                  final cat = categoryData.keys.elementAt(index);
+                                  setState(() {
+                                    // Toggle logic
+                                    if (_drilldownCategory == cat) {
+                                      _drilldownCategory = null;
+                                    } else {
+                                      _drilldownCategory = cat;
+                                    }
+                                  });
+                               }
+                            }
+                         },
+                       ),
+                       sectionsSpace: 2,
                        centerSpaceRadius: 0, 
                        sections: categoryData.entries.map((e) {
                          final double percent = (e.value / totalAmount) * 100;
-                         final bool isLarge = percent > 15;
+                         final bool isLarge = percent > 15 || _drilldownCategory == e.key; // Highlight selected
                          return PieChartSectionData(
                            color: _getCategoryColor(e.key),
                            value: e.value,
                            title: "${percent.toStringAsFixed(0)}%",
-                           radius: isLarge ? 50 : 40,
+                           radius: isLarge ? 55 : 40,
                            titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
                            badgeWidget: isLarge ? _Badge(e.key) : null,
-                           badgePositionPercentageOffset: 1.1
+                           badgePositionPercentageOffset: 1.1,
+                           borderSide: _drilldownCategory == e.key ? const BorderSide(color: Colors.white, width: 2) : BorderSide.none
                          );
                        }).toList(),
                      )
                    ),
-                 ),
-                 // Legend List
-                 Expanded(
-                   flex: 4,
-                   child: ListView(
-                     children: categoryData.entries.map((e) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4.0),
-                          child: Row(
-                            children: [
-                              Container(width: 12, height: 12, color: _getCategoryColor(e.key)),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  "${e.key} (${NumberFormat.compactCurrency(symbol: '₹').format(e.value)})", 
-                                  style: const TextStyle(fontSize: 12),
-                                  overflow: TextOverflow.ellipsis
-                                )
-                              ),
-                            ],
-                          ),
-                        );
-                     }).toList(),
                    ),
-                 ),
-               ],
-             ),
-          )
+                   // Legend List
+                   Expanded(
+                     flex: 4,
+                     child: ListView(
+                       shrinkWrap: true, // Fix list view height issue in column
+                       physics: const NeverScrollableScrollPhysics(),
+                       children: categoryData.entries.map((e) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4.0),
+                            child: Row(
+                              children: [
+                                Container(width: 12, height: 12, color: _getCategoryColor(e.key)),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    "${e.key} (${NumberFormat.compactCurrency(symbol: '₹').format(e.value)})", 
+                                    style: const TextStyle(fontSize: 12),
+                                    overflow: TextOverflow.ellipsis
+                                  )
+                                ),
+                              ],
+                            ),
+                          );
+                       }).toList(),
+                     ),
+                   ),
+                 ],
+               ),
+            ),
+          const SizedBox(height: 30),
+          
+          // DRILLDOWN TRANSACTIONS
+          if (_drilldownCategory != null) 
+             _buildDrilldownList(filteredByType, _drilldownCategory!),
+
+
+          const SizedBox(height: 30),
+          
+          // BUDGET ANALYSIS TABLE
+          if (_availableCategories.isNotEmpty)
+             _buildBudgetAnalysisTable(filteredByType, DateFormat('MMMM').format(_analysisDate)),
+          
+          const SizedBox(height: 50), // Bottom padding
         ],
       ),
     );
+  }
+
+  Widget _buildAnalysisMonthSelector() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          IconButton(
+            icon: const Icon(Icons.chevron_left),
+            onPressed: () {
+               setState(() {
+                 _analysisDate = DateTime(_analysisDate.year, _analysisDate.month - 1);
+                 _drilldownCategory = null; 
+               });
+            },
+          ),
+          Text(
+            DateFormat("MMMM yyyy").format(_analysisDate),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          IconButton(
+            icon: const Icon(Icons.chevron_right),
+            onPressed: () {
+               setState(() {
+                 _analysisDate = DateTime(_analysisDate.year, _analysisDate.month + 1);
+                 _drilldownCategory = null;
+               });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDrilldownList(List<Transaction> allTxns, String category) {
+    // Filter txns for this category
+    final txns = allTxns.where((t) {
+        String cat = _merchantCategories[t.cleanSender] ?? 'Uncategorized';
+        return cat == category;
+    }).toList();
+    
+    // Sort descending
+    txns.sort((a,b) => b.date.compareTo(a.date));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text("Transactions: $category", style: const TextStyle(fontWeight: FontWeight.bold)),
+            IconButton(icon: const Icon(Icons.close, size: 16), onPressed: () => setState(() => _drilldownCategory = null))
+          ],
+        ),
+        ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: txns.length,
+          itemBuilder: (context, index) => _buildTransactionItem(txns[index]),
+        ),
+        const Divider(),
+      ],
+    );
+  }
+
+  void _showUnifiedActionSheet() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.ios_share),
+            title: const Text("Export Data"),
+            onTap: () {
+              Navigator.pop(context);
+              _showExportDialog();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.file_upload),
+            title: const Text("Import Data"),
+            onTap: () {
+              Navigator.pop(context);
+              _importData();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.picture_as_pdf),
+            title: const Text("Generate PDF Report"),
+            subtitle: const Text("For the currently selected month in Transactions view"),
+            onTap: () {
+              Navigator.pop(context);
+              if (_flatGroupedTransactions.isNotEmpty) {
+                 _generatePdfAndOpen();
+               } else {
+                 ScaffoldMessenger.of(context).showSnackBar(
+                   const SnackBar(content: Text("No monthly data available to export. Please go to Transactions tab.")),
+                 );
+               }
+            },
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBudgetAnalysisTable(List<Transaction> periodTxns, String periodLabel) {
+      // 1. Calculate Spent per Category for this period
+      Map<String, double> spentMap = {};
+      for (var t in periodTxns) {
+         if (!t.isCredit) {
+           String cat = _merchantCategories[t.cleanSender] ?? 'Uncategorized';
+           spentMap[cat] = (spentMap[cat] ?? 0) + t.amount;
+         }
+      }
+      
+      // 2. Identify Applicable Limits
+      // If Weekly: Limit = Monthly Limit / 4
+      bool isWeekly = _analysisView == 'Weekly';
+      double divisor = isWeekly ? 4.0 : 1.0;
+      
+      List<Map<String, dynamic>> rows = [];
+      
+      // Combine Categories with Limits and Uncategorized spending
+      Set<String> allCats = {..._availableCategories, ...spentMap.keys};
+      
+      for (var cat in allCats) {
+         double monthlyLimit = _categoryLimits[cat] ?? 0;
+         double periodLimit = monthlyLimit / divisor;
+         double spent = spentMap[cat] ?? 0;
+         
+         // Only show if there is a limit set OR money spent
+         if (monthlyLimit > 0 || spent > 0) {
+            rows.add({
+              'category': cat,
+              'limit': periodLimit,
+              'spent': spent,
+              'status': (periodLimit > 0 && spent > periodLimit) ? 'Over' : 'Ok'
+            });
+         }
+      }
+      
+      // Sort by status (Over first), then by spent descending
+      rows.sort((a, b) {
+         if (a['status'] == 'Over' && b['status'] != 'Over') return -1;
+         if (a['status'] != 'Over' && b['status'] == 'Over') return 1;
+         return (b['spent'] as double).compareTo(a['spent'] as double);
+      });
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text("Budget Analysis ($periodLabel)", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          if (isWeekly) const Text("Weekly limits calculated as (Monthly Limit / 4)", style: TextStyle(fontSize: 10, color: Colors.grey)),
+          const SizedBox(height: 10),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              columnSpacing: 20,
+              headingRowHeight: 40,
+              dataRowMinHeight: 40,
+              dataRowMaxHeight: 40,
+              columns: const [
+                DataColumn(label: Text('Category', style: TextStyle(fontWeight: FontWeight.bold))),
+                DataColumn(label: Text('Limit', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
+                DataColumn(label: Text('Spent', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
+                DataColumn(label: Text('Status', style: TextStyle(fontWeight: FontWeight.bold))),
+              ],
+              rows: rows.map((r) {
+                 bool isOver = r['status'] == 'Over';
+                 double limit = r['limit'];
+                 return DataRow(
+                   cells: [
+                     DataCell(Text(r['category'], style: const TextStyle(fontSize: 12))),
+                     DataCell(Text(limit > 0 ? NumberFormat.compactCurrency(symbol: '₹').format(limit) : '-', style: const TextStyle(fontSize: 12))),
+                     DataCell(Text(NumberFormat.compactCurrency(symbol: '₹').format(r['spent']), style: const TextStyle(fontSize: 12))),
+                     DataCell(
+                       Container(
+                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                         decoration: BoxDecoration(
+                           color: isOver ? Colors.red.withOpacity(0.1) : Colors.green.withOpacity(0.1),
+                           borderRadius: BorderRadius.circular(12),
+                           border: Border.all(color: isOver ? Colors.red : Colors.green, width: 0.5)
+                         ),
+                         child: Text(isOver ? "Over" : "Ok", style: TextStyle(fontSize: 10, color: isOver ? Colors.red : Colors.green, fontWeight: FontWeight.bold)),
+                       )
+                     ),
+                   ]
+                 );
+              }).toList(),
+            ),
+          ),
+        ],
+      );
   }
 
   // Helper Widget for Pie Chart Badges
