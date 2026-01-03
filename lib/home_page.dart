@@ -350,6 +350,7 @@ class _HomePageState extends State<HomePage> {
       if (body.contains("to be paid") || 
           body.contains("bill generated") || 
           body.contains("payment due") || 
+          body.contains("to be debited") ||
           body.contains("will be debited") ||
           body.contains("about to debit") ||
           body.contains("scheduled for") ||
