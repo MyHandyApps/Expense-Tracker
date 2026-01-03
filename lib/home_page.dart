@@ -1767,6 +1767,7 @@ class _HomePageState extends State<HomePage> {
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: DataTable(
+              showCheckboxColumn: false,
               columnSpacing: 20,
               headingRowHeight: 40,
               dataRowMinHeight: 40,
@@ -1781,6 +1782,15 @@ class _HomePageState extends State<HomePage> {
                  bool isOver = r['status'] == 'Over';
                  double? limit = r['limit_display'];
                  return DataRow(
+                   onSelectChanged: (_) {
+                      setState(() {
+                        if (_drilldownCategory == r['category']) {
+                          _drilldownCategory = null;
+                        } else {
+                          _drilldownCategory = r['category'];
+                        }
+                      });
+                   },
                    cells: [
                      DataCell(Text(r['category'], style: const TextStyle(fontSize: 12))),
                      DataCell(Text(limit != null ? NumberFormat.compactCurrency(symbol: '₹').format(limit) : 'NA', style: const TextStyle(fontSize: 12))),
