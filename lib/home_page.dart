@@ -1472,35 +1472,36 @@ class _HomePageState extends State<HomePage> {
     final t = _lastMonthlyTransaction!;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(16),
+        color: Theme.of(context).colorScheme.secondaryContainer.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         children: [
-          const Icon(Icons.history, size: 20),
-          const SizedBox(width: 12),
+          const Icon(Icons.history, size: 16),
+          const SizedBox(width: 8),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
               children: [
-                const Text("Latest Transaction", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-                Text(
-                  "${t.cleanSender} • ${DateFormat('MMM d, h:mm a').format(t.date)}",
-                  style: const TextStyle(fontSize: 12),
-                  maxLines: 1, 
-                  overflow: TextOverflow.ellipsis
+                const Text("Latest: ", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                Expanded(
+                  child: Text(
+                    "${t.cleanSender} • ${DateFormat('MMM d').format(t.date)}",
+                    style: const TextStyle(fontSize: 11),
+                    maxLines: 1, 
+                    overflow: TextOverflow.ellipsis
+                  ),
                 ),
               ],
             ),
           ),
           Text(
-            NumberFormat.currency(symbol: "₹", locale: "en_IN").format(t.amount),
+            NumberFormat.currency(symbol: "₹", locale: "en_IN", decimalDigits: 0).format(t.amount),
             style: TextStyle(
               color: t.isCredit ? Colors.green[800] : Colors.red[800],
               fontWeight: FontWeight.bold,
-              fontSize: 14,
+              fontSize: 12,
             ),
           ),
         ],
@@ -1528,80 +1529,103 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildMonthSelector() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
       child: Column(
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              IconButton.filledTonal(
+              IconButton( // Standard IconButton is smaller than filledTonal
                 icon: const Icon(Icons.chevron_left),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
                 onPressed: () => _changeMonth(-1),
               ),
-              Text(
-                DateFormat("MMMM yyyy").format(_selectedDate),
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                child: Text(
+                  DateFormat("MMMM yyyy").format(_selectedDate),
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
               ),
-              IconButton.filledTonal(
+              IconButton(
                 icon: const Icon(Icons.chevron_right),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
                 onPressed: _selectedDate.month == DateTime.now().month && _selectedDate.year == DateTime.now().year 
                   ? null
                   : () => _changeMonth(1),
               ),
             ],
           ),
-          const SizedBox(height: 8),
           Container(
+            height: 40,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(12),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.5),
+              borderRadius: BorderRadius.circular(8),
             ),
-            child: Column(
+            child: Row(
               children: [
-                DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: _selectedAccount,
-                    isExpanded: true,
-                    icon: const Icon(Icons.account_balance_wallet),
-                    items: _accounts.map((String value) {
-                      return DropdownMenuItem<String>(
-                        value: value,
-                        child: Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
-                      );
-                    }).toList(),
-                    onChanged: (newValue) {
-                      setState(() {
-                        _selectedAccount = newValue!;
-                      });
-                      _filterByMonth();
-                    },
+                // Account Dropdown
+                Expanded(
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _selectedAccount,
+                      isExpanded: true,
+                      isDense: true,
+                      icon: const Icon(Icons.account_balance_wallet, size: 16),
+                      style: TextStyle(fontSize: 12, color: Theme.of(context).textTheme.bodyMedium!.color, fontWeight: FontWeight.bold),
+                      items: _accounts.map((String value) {
+                        return DropdownMenuItem<String>(
+                          value: value,
+                          child: Text(value, overflow: TextOverflow.ellipsis),
+                        );
+                      }).toList(),
+                      onChanged: (newValue) {
+                        setState(() {
+                          _selectedAccount = newValue!;
+                        });
+                        _filterByMonth();
+                      },
+                    ),
                   ),
                 ),
-                const Divider(),
-                DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: _filterType,
-                    isExpanded: true,
-                    icon: const Icon(Icons.filter_list),
-                    items: ['All', 'Credit', 'Debit'].map((String value) {
-                      return DropdownMenuItem<String>(
-                        value: value,
-                        child: Text(value),
-                      );
-                    }).toList(),
-                    onChanged: (newValue) {
-                      setState(() {
-                        _filterType = newValue!;
-                      });
-                      _filterByMonth();
-                    },
+                // Vertical Divider
+                Container(
+                  width: 1, 
+                  height: 20, 
+                  color: Colors.grey.withOpacity(0.3), 
+                  margin: const EdgeInsets.symmetric(horizontal: 8)
+                ),
+                // Type Filter Dropdown
+                Expanded(
+                   child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _filterType,
+                      isExpanded: true,
+                      isDense: true,
+                      icon: const Icon(Icons.filter_list, size: 16),
+                      style: TextStyle(fontSize: 12, color: Theme.of(context).textTheme.bodyMedium!.color),
+                      items: ['All', 'Credit', 'Debit'].map((String value) {
+                        return DropdownMenuItem<String>(
+                          value: value,
+                          child: Text(value),
+                        );
+                      }).toList(),
+                      onChanged: (newValue) {
+                        setState(() {
+                          _filterType = newValue!;
+                        });
+                        _filterByMonth();
+                      },
+                    ),
                   ),
                 ),
               ],
             ),
-            ),
-          ],
+          ),
+        ],
       ),
     );
   }
@@ -1611,43 +1635,42 @@ class _HomePageState extends State<HomePage> {
     double total = _monthTotalCredit + _monthTotalDebit;
     
     return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
         children: [
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _buildSummaryRow("Income", _monthTotalCredit, Colors.greenAccent),
-                const SizedBox(height: 10),
                 _buildSummaryRow("Expense", _monthTotalDebit, Colors.redAccent),
               ],
             ),
           ),
           if (total > 0)
           SizedBox(
-            height: 70,
-            width: 70,
+            height: 50,
+            width: 50,
             child: PieChart(
               PieChartData(
-                sectionsSpace: 2,
+                sectionsSpace: 0,
                 centerSpaceRadius: 0,
                 sections: [
                   PieChartSectionData(
                     color: Colors.greenAccent,
                     value: _monthTotalCredit <= 0 && _monthTotalDebit <= 0 ? 1 : (_monthTotalCredit > 0 ? _monthTotalCredit : 0),
-                    radius: 20,
+                    radius: 25,
                     showTitle: false,
                   ),
                   PieChartSectionData(
                     color: Colors.redAccent,
                     value: _monthTotalDebit > 0 ? _monthTotalDebit : 0,
-                    radius: 20,
+                    radius: 25,
                     showTitle: false,
                   ),
                 ],
@@ -1662,13 +1685,14 @@ class _HomePageState extends State<HomePage> {
   Widget _buildSummaryRow(String label, double amount, Color color) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        Text(label, style: const TextStyle(fontSize: 10, color: Colors.grey)), // Reduced font size
         Text(
-          NumberFormat.currency(symbol: "₹", locale: "en_IN").format(amount),
+          NumberFormat.compactCurrency(symbol: "₹", locale: "en_IN").format(amount), // Compact currency
           style: TextStyle(
             color: color,
-            fontSize: 20,
+            fontSize: 18, // Reduced from 20
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -1692,7 +1716,7 @@ class _HomePageState extends State<HomePage> {
 
     return ListView.builder(
       itemCount: _displayList.length,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0), // Removed top padding
       itemBuilder: (context, index) {
         final item = _displayList[index];
         
@@ -1706,22 +1730,29 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // ... _buildCategoryTile remains mostly same, maybe check margin?
+  // skipping _buildCategoryTile and _buildMerchantTile modifications for now as list items are expandable tiles which are naturally large.
+  // modifying _buildTransactionItem which is inside the expansions.
+
   Widget _buildCategoryTile(CategoryGroup cat) {
     return Card(
       elevation: 0,
-      color: Colors.blue.withOpacity(0.05), // Distinct color for Categories
-      margin: const EdgeInsets.only(bottom: 12),
+      color: Colors.blue.withOpacity(0.05),
+      margin: const EdgeInsets.only(bottom: 8), // Reduced from 12
       shape: RoundedRectangleBorder(
         side: BorderSide(color: Colors.blue.withOpacity(0.2)),
         borderRadius: BorderRadius.circular(12)
       ),
       child: ExpansionTile(
+          dense: true, // Make it dense
+          visualDensity: VisualDensity.compact,
           shape: const Border(),
           leading: const CircleAvatar(
-             child: Icon(Icons.folder_open),
+             radius: 16,
+             child: Icon(Icons.folder_open, size: 16),
           ),
-          title: Text(cat.categoryName, style: const TextStyle(fontWeight: FontWeight.bold)),
-          subtitle: Text("${cat.merchants.length} Merchants"),
+          title: Text(cat.categoryName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          subtitle: Text("${cat.merchants.length} Merchants", style: const TextStyle(fontSize: 10)),
           trailing: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -1731,7 +1762,7 @@ class _HomePageState extends State<HomePage> {
                 style: TextStyle(
                   color: cat.totalCredit >= cat.totalDebit ? Colors.green : Colors.red,
                   fontWeight: FontWeight.bold,
-                  fontSize: 14,
+                  fontSize: 12,
                 ),
               ),
             ],
@@ -1745,36 +1776,39 @@ class _HomePageState extends State<HomePage> {
     return Card(
       elevation: 0,
       color: isNested ? Colors.white.withOpacity(0.5) : Theme.of(context).cardColor,
-      margin: isNested ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4) : const EdgeInsets.only(bottom: 12),
+      margin: isNested ? const EdgeInsets.symmetric(horizontal: 4, vertical: 2) : const EdgeInsets.only(bottom: 8), // Reduced
       shape: RoundedRectangleBorder(
         side: BorderSide(color: Colors.grey.withOpacity(0.2)),
         borderRadius: BorderRadius.circular(12)
       ),
       child: ExpansionTile(
+        dense: true, // Make it dense
+        visualDensity: VisualDensity.compact,
         shape: const Border(),
         leading: CircleAvatar(
           backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-          maxRadius: 16,
+          radius: 16,
           child: Text(
             group.sender.substring(0, 1).toUpperCase(),
-            style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onPrimaryContainer),
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onPrimaryContainer),
           ),
         ),
         title: Row(
           children: [
-            Expanded(child: Text(group.sender, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14))),
-            // TAG BUTTON 
+            Expanded(child: Text(group.sender, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
             IconButton(
-              icon: const Icon(Icons.label_outline, size: 18, color: Colors.grey),
+              icon: const Icon(Icons.label_outline, size: 16, color: Colors.grey),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
               onPressed: () {
-                _showCategoryDialog(group.sender, group.sender); // Sender is the merchant name here
+                _showCategoryDialog(group.sender, group.sender);
               },
             ),
           ],
         ),
         subtitle: Text("${group.transactions.length} Txns", style: const TextStyle(fontSize: 10)),
         trailing: Container(
-          constraints: const BoxConstraints(minWidth: 60),
+          constraints: const BoxConstraints(minWidth: 50),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -1796,16 +1830,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _showCategoryDialog(String currentGroup, String originalMerchant) {
-    // If grouped by Category, originalMerchant might be different from currentGroup.
-    // We want to edit the category for the Underlying Merchant(s).
-    // But here we can simplified: We are assigning a category to the "Merchant".
-    // If the group is already a Category (e.g. Groceries), we might want to move it?
-    // Let's assume user long-presses a Merchant Group to assign it to a Category.
-    // If they long-press a Category Group, it's ambiguous which merchant they mean.
-    // For now, let's allow re-mapping the 'cleanSender' of the first transaction in the group?
-    // Or just pass the group name if it's not a category? 
-    // Optimization: Just show dialog acting on 'originalMerchant' (cleanSender).
-    
     TextEditingController catController = TextEditingController();
     String? assigned = _merchantCategories[originalMerchant];
     if (assigned != null) catController.text = assigned;
@@ -1884,19 +1908,21 @@ class _HomePageState extends State<HomePage> {
   Widget _buildTransactionItem(Transaction t) {
     return ListTile(
       dense: true,
-      contentPadding: const EdgeInsets.only(left: 72, right: 16, bottom: 8),
+      visualDensity: VisualDensity.compact, // Compact density
+      contentPadding: const EdgeInsets.only(left: 60, right: 16), // Reduced indent
+      minVerticalPadding: 0,
       title: Text(
         t.body,
-        maxLines: 2,
+        maxLines: 1, // Reduced to 1 line title to save space? or keep 2? User said "more space for transactions", usually implies seeing more items.
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 12),
+        style: const TextStyle(fontSize: 11),
       ),
       subtitle: Text(
         DateFormat("MMM d, h:mm a").format(t.date),
         style: const TextStyle(fontSize: 10, color: Colors.grey),
       ),
       trailing: Text(
-        NumberFormat.currency(symbol: "₹", locale: "en_IN").format(t.amount),
+        NumberFormat.currency(symbol: "₹", locale: "en_IN", decimalDigits: 0).format(t.amount),
         style: TextStyle(
           color: t.isCredit ? Colors.green : Colors.red,
           fontWeight: FontWeight.w600,
