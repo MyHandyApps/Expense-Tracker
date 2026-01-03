@@ -13,6 +13,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
+import 'settings_page.dart';
 
 
 class Transaction {
@@ -126,6 +127,12 @@ class _HomePageState extends State<HomePage> {
   List<String> _accounts = ['All'];
   String _selectedAccount = 'All';
   String? _userName;
+  
+  // Settings Data
+  List<String> _availableCategories = [];
+  Map<String, double> _categoryLimits = {};
+  List<String> _overLimitCategories = [];
+  bool _hasNotification = false;
 
   Future<File> get _localFile async {
     final directory = await getApplicationDocumentsDirectory();
@@ -140,9 +147,33 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadData() async {
     await _checkUserName();
+    await _loadSettings(); // Load user categories and limits
     await _loadManualBalances();
     await _loadCategories();
     await _loadMessages();
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // Categories
+    List<String>? cats = prefs.getStringList('user_categories');
+    if (cats == null || cats.isEmpty) {
+      cats = ["Groceries", "Fuel", "Food", "Travel", "Bills", "Shopping", "Medical", "Entertainment"];
+       await prefs.setStringList('user_categories', cats);
+    }
+    
+    // Limits
+    Map<String, double> loadedLimits = {};
+    for (String c in cats) {
+      double? val = prefs.getDouble("limit_$c");
+      if (val != null) loadedLimits[c] = val;
+    }
+
+    setState(() {
+      _availableCategories = cats!;
+      _categoryLimits = loadedLimits;
+    });
   }
 
   Future<void> _checkUserName() async {
@@ -302,8 +333,7 @@ class _HomePageState extends State<HomePage> {
 
     final messages = await _query.querySms(
       kinds: [SmsQueryKind.inbox],
-      count: 200, // Reduced count since we cache, but initially we might need more?
-      // Optimization: Only query if we want updates.
+      // count: 200, // Removed limit to read all messages
     );
 
     // 3. Convert SMS to Transactions (Memory only for now)
@@ -826,6 +856,55 @@ class _HomePageState extends State<HomePage> {
       _monthTotalDebit = totalDebit;
       // _lastMonthlyTransaction is already set
     });
+    
+    _checkLimits();
+  }
+
+  void _checkLimits() {
+    List<String> alerts = [];
+    
+    // _displayList contains CategoryGroup items which have totals.
+    // We only care about CURRENT month limits. 
+    // And assuming _monthTotalDebit is relevant to the displayed period.
+    // If the view is filtered by specific account, limits might be misleading if they apply to "All accounts".
+    // Usually limits are global expenses. So we should arguably check limits against GLOBALLY filtered data for this month, 
+    // regardless of current display filter? 
+    // The requirement says: "if that category crosses that number for that month". 
+    // Let's assume we check against the data currently loaded for this month (across all accounts effectively if user selects All, 
+    // but if user filters by account, maybe they only want to see that account's contribution. 
+    // However, limits are usually budget-based (Total). 
+    // For simplicity, we check against the *displayed* category totals. 
+    // A better approach would be to calculate global totals for the month in background, but let's stick to visible data for now or users might get confused 
+    // why it says "Over limit" when the list shows 0 (because filtered by account).
+    
+    // ACTUALLY, to be robust, let's calculate the global sums for this month specifically for limit checking.
+    // 1. Get all transactions for current selected month.
+    final monthTxns = _allTransactions.where((t) => t.date.year == _selectedDate.year && t.date.month == _selectedDate.month).toList();
+    
+    // 2. Group by Category
+    Map<String, double> categoryIncurred = {};
+    for (var t in monthTxns) {
+      if (!t.isCredit) { // Only Debit counts towards limit
+         String? cat = _merchantCategories[t.cleanSender];
+         if (cat != null) {
+           categoryIncurred[cat] = (categoryIncurred[cat] ?? 0) + t.amount;
+         }
+      }
+    }
+    
+    // 3. Compare
+    _categoryLimits.forEach((cat, limit) {
+      if (categoryIncurred.containsKey(cat)) {
+        if (categoryIncurred[cat]! > limit) {
+           alerts.add(cat);
+        }
+      }
+    });
+
+    setState(() {
+      _overLimitCategories = alerts;
+      _hasNotification = alerts.isNotEmpty;
+    });
   }
 
   GroupedTransaction _createGroup(String colName, List<Transaction> txns) {
@@ -1067,6 +1146,42 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: false,
+      drawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            DrawerHeader(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  const Icon(Icons.account_balance_wallet, size: 48),
+                  const SizedBox(height: 10),
+                   Text("Expense Tracker", style: Theme.of(context).textTheme.titleLarge),
+                   if (_userName != null) Text(_userName!, style: Theme.of(context).textTheme.bodyMedium),
+                ],
+              ),
+            ),
+             ListTile(
+              leading: const Icon(Icons.settings),
+              title: const Text("Settings"),
+              onTap: () async {
+                Navigator.pop(context); // Close drawer
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SettingsPage()),
+                );
+                // Reload on return
+                setState(() => _isLoading = true);
+                _loadData();
+              },
+            ),
+          ],
+        ),
+      ),
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1083,6 +1198,45 @@ class _HomePageState extends State<HomePage> {
             icon: const Icon(Icons.ios_share),
             tooltip: "Export",
             onPressed: _showExportDialog,
+          ),
+          // Notification Bell
+          Stack(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.notifications),
+                onPressed: () {
+                   if (_hasNotification) {
+                      _showLimitNotification();
+                   } else {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No notifications")));
+                   }
+                },
+              ),
+              if (_hasNotification)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    constraints: const BoxConstraints(
+                      minWidth: 12,
+                      minHeight: 12,
+                    ),
+                    child: Text(
+                      '${_overLimitCategories.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 8,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                )
+            ],
           ),
           IconButton(
             icon: const Icon(Icons.file_upload),
@@ -1859,10 +2013,11 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 12),
               const Text("Quick Select:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
               const SizedBox(height: 8),
+              const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                children: ["Groceries", "Fuel", "Food", "Travel", "Bills", "Shopping", "Medical", "Entertainment"].map((c) {
+                children: _availableCategories.map((c) {
                   return ActionChip(
                     label: Text(c.toUpperCase(), style: const TextStyle(fontSize: 10)),
                     padding: EdgeInsets.zero,
@@ -1929,6 +2084,38 @@ class _HomePageState extends State<HomePage> {
           fontSize: 12,
         ),
       ),
+    );
+  }
+  void _showLimitNotification() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: const [
+             Icon(Icons.warning, color: Colors.red),
+             SizedBox(width: 8),
+             Text("Budget Alert")
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("The following categories have exceeded their monthly limit:"),
+            const SizedBox(height: 10),
+            ..._overLimitCategories.map((c) => ListTile(
+               leading: const Icon(Icons.circle, size: 8, color: Colors.red),
+               title: Text(c, style: const TextStyle(fontWeight: FontWeight.bold)),
+               subtitle: Text("Limit: ₹${_categoryLimits[c]?.toStringAsFixed(0)}"),
+               dense: true,
+               contentPadding: EdgeInsets.zero,
+            )).toList()
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Dismiss"))
+        ],
+      )
     );
   }
 }

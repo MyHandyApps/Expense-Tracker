@@ -55,7 +55,7 @@ class MyApp extends StatelessWidget {
           ),
         ),
       ),
-      themeMode: ThemeMode.dark, // Default to Dark for "Ambient" feel
+      themeMode: ThemeMode.light, // Default to Dark for "Ambient" feel
       home: const SplashScreen(),
     );
   }
