@@ -11,6 +11,9 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:file_picker/file_picker.dart';
+
 
 class Transaction {
   final String sender;
@@ -943,7 +946,123 @@ class _HomePageState extends State<HomePage> {
   String _analysisFilter = 'All'; // 'All', 'Credit', 'Debit'
   int _selectedChartIndex = -1;
 
+  Future<void> _showExportDialog() async {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).cardColor,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("Export Data", style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            const Text("Save or send your transaction history.", style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 24),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: Colors.blue.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+                child: const Icon(Icons.ios_share, color: Colors.blue),
+              ),
+              title: const Text("Share / Email"),
+              subtitle: const Text("Send via Email, WhatsApp, etc."),
+              onTap: () async {
+                Navigator.pop(context);
+                final file = await _localFile;
+                if (await file.exists()) {
+                   await Share.shareXFiles([XFile(file.path)], text: 'Expense Tracker Backup');
+                } else {
+                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No data file found.")));
+                }
+              },
+            ),
+             const SizedBox(height: 16),
+             ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+                child: const Icon(Icons.save_alt, color: Colors.green),
+              ),
+              title: const Text("Save to Phone"),
+              subtitle: const Text("Save copy to local storage"),
+              onTap: () async {
+                 Navigator.pop(context);
+                 final file = await _localFile;
+                 if (await file.exists()) {
+                    // Sharing is the modern standard for saving to Files on Android 10+
+                    await Share.shareXFiles([XFile(file.path)], text: 'Expense Tracker Backup');
+                 }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _importData() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles();
+    if (result != null) {
+      File pickerFile = File(result.files.single.path!);
+      try {
+        final content = await pickerFile.readAsString();
+        // Parse NDJSON
+        List<Transaction> imported = [];
+        final lines = content.split('\n');
+        for(var line in lines) {
+           if(line.trim().isNotEmpty) {
+             try {
+                imported.add(Transaction.fromJson(jsonDecode(line)));
+             } catch(e) {
+               // ignore errors
+             }
+           }
+        }
+        
+        if (imported.isNotEmpty) {
+           await _mergeAndSave(imported);
+        } else {
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No valid transactions found in file.")));
+        }
+      } catch (e) {
+         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error reading file: $e")));
+      }
+    }
+  }
+
+  Future<void> _mergeAndSave(List<Transaction> newTxns) async {
+      Set<String> existingKeys = _allTransactions.map((t) => "${t.date.millisecondsSinceEpoch}_${t.amount}_${t.sender}").toSet();
+      List<Transaction> toAdd = [];
+      for(var t in newTxns) {
+         String key = "${t.date.millisecondsSinceEpoch}_${t.amount}_${t.sender}";
+         if(!existingKeys.contains(key)) {
+            toAdd.add(t);
+            existingKeys.add(key);
+         }
+      }
+      
+      if(toAdd.isNotEmpty) {
+         final file = await _localFile;
+         final sink = file.openWrite(mode: FileMode.append);
+         for(var t in toAdd) {
+           sink.writeln(jsonEncode(t.toJson()));
+         }
+         await sink.close();
+         
+         await _loadMessages(); // Reload full state
+         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Imported ${toAdd.length} new transactions.")));
+      } else {
+         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No new unique transactions found.")));
+      }
+  }
+
   @override
+
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: false,
@@ -960,6 +1079,16 @@ class _HomePageState extends State<HomePage> {
         elevation: 0,
         actions: [
           IconButton(
+            icon: const Icon(Icons.ios_share),
+            tooltip: "Export",
+            onPressed: _showExportDialog,
+          ),
+          IconButton(
+            icon: const Icon(Icons.file_upload),
+            tooltip: "Import",
+            onPressed: _importData,
+          ),
+          IconButton(
             icon: const Icon(Icons.picture_as_pdf),
             tooltip: "Download PDF",
             onPressed: () {
@@ -974,6 +1103,7 @@ class _HomePageState extends State<HomePage> {
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
+            tooltip: "Refresh",
             onPressed: () {
               setState(() {
                 _isLoading = true;
@@ -983,13 +1113,24 @@ class _HomePageState extends State<HomePage> {
           )
         ],
       ),
-      body: _isLoading
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: Theme.of(context).brightness == Brightness.dark 
+              ? [const Color(0xFF16171d), const Color(0xFF2d3436)]
+              : [Colors.white, const Color(0xFFf5f7fa)]
+          )
+        ),
+        child: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _permissionDenied
               ? _buildPermissionView()
               : _currentTabIndex == 0 
                   ? _buildTransactionsTab()
                   : _buildAnalysisTab(),
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentTabIndex,
         onDestinationSelected: (index) {
