@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'settings_page.dart';
+import 'splash_screen.dart';
 
 
 class Transaction {
@@ -386,6 +387,8 @@ class _HomePageState extends State<HomePage> {
           body.contains("bill generated") || 
           body.contains("payment due") || 
           body.contains("to be debited") ||
+          body.contains("for just") ||
+          body.contains("Remember") ||
           body.contains("will be debited") ||
           body.contains("about to debit") ||
           body.contains("scheduled for") ||
@@ -1182,6 +1185,17 @@ class _HomePageState extends State<HomePage> {
                 // Reload on return
                 setState(() => _isLoading = true);
                 _loadData();
+              },
+            ),
+             ListTile(
+              leading: const Icon(Icons.new_releases),
+              title: const Text("Release Notes"),
+              onTap: () {
+                Navigator.pop(context); // Close drawer
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ReleaseNotesPage()),
+                );
               },
             ),
           ],
